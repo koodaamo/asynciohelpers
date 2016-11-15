@@ -1,3 +1,4 @@
+from abc import abstractproperty, abstractmethod
 import os, logging, signal, types
 from autobahn.websocket.util import parse_url
 
@@ -5,10 +6,15 @@ from autobahn.websocket.util import parse_url
 def env_configured(cls):
    "get _host, _port, and _ssl from CONNECT_HOST, CONNECT_PORT & CONNECT_SSL env vars"
 
-   cls._host = os.environ.get("CONNECT_HOST")
-   cls._port = os.environ.get("CONNECT_PORT")
-   cls._ssl = os.environ.get("CONNECT_SSL")
-
+   host = os.environ.get("CONNECT_HOST")
+   if host:
+      cls._host = host
+   port = os.environ.get("CONNECT_PORT")
+   if port:
+      cls._port = port
+   ssl = os.environ.get("CONNECT_SSL")
+   if ssl:
+      cls._ssl = ssl
    return cls
 
 
@@ -35,11 +41,14 @@ def wamp_configured(cls):
 def wamp_env_configured(cls):
    "get wmp_url & wmp_realm from WAMP_ROUTER_URL & WAMP_REALM env vars"
 
+   envvar = os.environ.get("WAMP_ROUTER_URL")
+   if envvar:
+      cls.wmp_url = envvar
 
-def loggerprovider(cls):
-   "bind the global logger to class, or create new using class name"
+   envvar = os.environ.get("WAMP_ROUTER_REALM")
+   if envvar:
+      cls.wmp_realm = envvar
 
-   cls._logger = globals().get("logger", logging.getLogger(cls.__name__))
    return cls
 
 
@@ -51,6 +60,14 @@ def signalled(signalvalue):
       return f
 
    return deco
+
+
+def loggerprovider(cls):
+   "bind the global logger to class, or create new using class name"
+   cls._logger = logging.getLogger(cls.__name__)
+   level = getattr(cls, "LOGLEVEL", None) or logging.INFO
+   cls._logger.setLevel(level)
+   return cls
 
 
 def logged(*args):
@@ -97,5 +114,21 @@ def logmethod(name, *args, **kwargs):
 
    return deco
 
+
+def isabstractmethod(obj):
+   is_function = isinstance(obj, types.FunctionType)
+   has_name = obj.__class__.__name__ == "abstractmethod"
+   return is_function and has_name
+
+
+def provides_abc(klass, abc):
+   "whether or not a class provides an abc"
+   members = list(abc.__dict__.items())
+   attrs = [k for k,v in members if isinstance(v, abstractproperty)]
+   methods = [k for k,v in members if isabstractmethod(v)]
+   for member in attrs + methods:
+      if not any(member in base.__dict__ for base in klass.__mro__):
+         return False
+   return True
 
 
