@@ -1,11 +1,11 @@
-import time, multiprocessing, socketserver, subprocess
+import os, time, multiprocessing, socketserver, subprocess
 import aiohttp
 import aiohttp.server
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pytest import fixture
 
 from .config import TEST_HTTP_HOST, TEST_HTTP_PORT
-from .utils import TCPHandler
+from asynciohelpers.testing import TCPHandler
 
 
 @fixture(scope="function")
@@ -71,3 +71,15 @@ def crossbar():
    p.terminate()
    #p.wait()
 
+
+@fixture(scope="function")
+def crossbar_router_running():
+   CBCMD = os.environ.get("CROSSBAR")
+   assert CBCMD, "Must have environment variable CROSSBAR set to crossbar binary path"
+   cdir = os.path.dirname(__file__)
+   cbp = subprocess.Popen([CBCMD, "start", "--cbdir", cdir], stdout=subprocess.DEVNULL)
+   print("\ngiving some time for the WAMP router to start...\n")
+   time.sleep(3)
+   yield cbp
+   cbp.terminate()
+   cbp.wait()
