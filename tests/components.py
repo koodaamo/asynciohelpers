@@ -1,15 +1,21 @@
 """ WAMP components used for testing """
 
-import logging
+import asyncio
 from autobahn.asyncio.wamp import ApplicationSession
 from asynciohelpers.util import loggerprovider, logged, logmethod
 
+from .config import LOGLEVEL
+
 
 @loggerprovider
-@logmethod("onJoin", async=True)
 class WAMPComponent(ApplicationSession):
-   ""
+
+   LOGLEVEL = LOGLEVEL
 
    @logged
-   async def onConnect(self):
-      super().onConnect()
+   def onJoin(self, details):
+      self._transport._session_joined.set_result(True)
+
+   @logged
+   def onConnect(self):
+      self.join(self.config.realm)
