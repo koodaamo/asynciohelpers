@@ -13,5 +13,5 @@ TEST_WAMP_PORT = 8080
 
 logging.basicConfig()
 logger = logging.getLogger("testing")
-
-
+LOGLEVEL = logging.DEBUG
+logger.setLevel(LOGLEVEL)
