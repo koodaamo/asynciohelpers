@@ -3,7 +3,6 @@ from abc import abstractmethod, abstractproperty, ABCMeta
 
 class ServiceBaseABC(metaclass=ABCMeta):
 
-
    @abstractproperty
    def _host(self):
       "host or IP to connect to"
@@ -37,5 +36,37 @@ class ServiceBaseABC(metaclass=ABCMeta):
       "perform cleanup here after stop is called"
 
 
+class WAMPServiceABC(metaclass=ABCMeta):
 
+   @abstractproperty
+   def wmp_url():
+      ""
 
+   @abstractproperty
+   def wmp_realm():
+      ""
+
+   # OPTIONAL, SO NOT PART OF ABC
+   #@abstractproperty
+   #def wmp_ssl():
+   #   ""
+
+   @abstractproperty
+   def wmp_sessioncomponent():
+      ""
+
+   @abstractproperty
+   def wmp_serializers():
+      ""
+
+   @abstractproperty
+   def wmp_extra():
+      ""
+
+   @abstractproperty
+   def _transport_factory():
+      ""
+
+   @abstractmethod
+   def _component():
+      ""
