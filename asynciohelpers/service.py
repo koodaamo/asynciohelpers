@@ -2,15 +2,20 @@ from functools import partial
 from contextlib import suppress
 import asyncio
 from concurrent.futures import CancelledError
-
+import txaio
 from .abcs import ServiceBaseABC
 from .exceptions import SetupException
 from .util import loggerprovider
 
 
-@loggerprovider
-class AsyncioServiceBase(ServiceBaseABC):
+
+class AsyncioServiceBase:
    "base SIGTERM-stoppable base class that just sets up and runs the loop"
+
+   # these three required per the ABC
+   _host = None
+   _port = None
+   _ssl = None
 
    _loop = None
    _external_loop = False
@@ -34,11 +39,14 @@ class AsyncioServiceBase(ServiceBaseABC):
 
 
    def start(self):
-      self._logger.info("%s start requested" % self.__class__.__name__)
 
       self._loop = self._loop or asyncio.get_event_loop()
-      self._closing = False
+      txaio.use_asyncio()
+      txaio.config.loop = self._loop
+      #txaio.start_logging(level='info')
 
+      self._logger.info("%s start requested" % self.__class__.__name__)
+      self._closing = False
       self._started = asyncio.Future(loop=self._loop)
 
       # start the runner coro after setup is done, or exit if error
@@ -49,19 +57,18 @@ class AsyncioServiceBase(ServiceBaseABC):
             self._logger.warn("setup failed, stopping immediately: %s" % str(exc))
             setup_failed = SetupException("failure: %s" % str(exc))
             self._started.set_exception(setup_failed)
-            return self._started
          else:
             self._runner = self._loop.create_task(self._run())
             self._started.set_result(True)
 
-      setup_task = self._loop.create_task(self._setup())
+      self._setup_task = self._loop.create_task(self._setup())
 
       if self._external_loop:
-         setup_task.add_done_callback(setup_finished)
+         self._setup_task.add_done_callback(setup_finished)
          return self._started
       else:
          try:
-            self._loop.run_until_complete(setup_task)
+            self._loop.run_until_complete(self._setup_task)
          except Exception as exc:
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._logger.warn("setup failed, stopping immediately: %s" % str(exc))
@@ -100,6 +107,7 @@ class AsyncioConnectingServiceBase(AsyncioServiceBase):
       kwargs = {"host": self._host, "port": self._port, "ssl": self._ssl}
       connector = self._loop.create_connection(*args, **kwargs)
       (self._transport, self._protocol) = await connector
+      self._logger.debug("connected transport %s" % self._transport)
       self._protocol.is_closed = asyncio.Future(loop=self._loop)
 
    async def _setup(self):
