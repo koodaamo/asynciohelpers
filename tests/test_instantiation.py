@@ -7,10 +7,8 @@ from asynciohelpers.exceptions import SetupException
 from .fixtures import with_mock_server
 from .servers import ConnectingAsyncioServer, ReConnectingAsyncioServer
 from .servers import ConnectingWAMPService, ReConnectingWAMPService
-
-
 from .config import TEST_HOST, TEST_PORT, logger
-from .utils import get_socket_server, get_http_server
+
 
 tested_services = (ConnectingAsyncioServer,
                    ReConnectingAsyncioServer,

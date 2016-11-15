@@ -3,11 +3,11 @@ from pytest import raises, mark, fixture
 
 from asynciohelpers.service import AsyncioServiceBase
 from asynciohelpers.exceptions import SetupException
+from asynciohelpers.testing import get_socket_server, get_http_server
 
 from .fixtures import with_mock_server
 from .servers import ConnectingAsyncioServer, ConnectingWAMPService
 from .config import TEST_HOST, TEST_PORT, logger
-from .utils import get_socket_server, get_http_server
 
 
 tested_services = (ConnectingAsyncioServer, ConnectingWAMPService)
