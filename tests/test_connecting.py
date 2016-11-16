@@ -34,7 +34,8 @@ async def test_01_internal_loop_connect(servicefactory, event_loop):
 
    mock = await start_mock()
 
-   server = servicefactory(loop=event_loop)
+   server = servicefactory()
+   server.set_loop(event_loop)
    await server.start()
    await server.stop()
 

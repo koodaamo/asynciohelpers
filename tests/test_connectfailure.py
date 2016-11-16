@@ -23,7 +23,8 @@ def servicefactory(request):
 @mark.asyncio(forbid_global_loop=True)
 async def test_01_internal_loop_cannotconnect(servicefactory, event_loop):
 
-   server = ConnectingAsyncioServer(loop=event_loop)
+   server = ConnectingAsyncioServer()
+   server.set_loop(event_loop)
    with raises(SetupException):
       await server.start()
 

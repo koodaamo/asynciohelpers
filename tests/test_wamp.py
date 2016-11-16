@@ -21,7 +21,8 @@ def servicefactory(request):
 
 
 def test_01_join_realm(servicefactory, crossbar_router_running, event_loop):
-   server = servicefactory(loop=event_loop)
+   server = servicefactory()
+   server.set_loop(event_loop)
    event_loop.run_until_complete(server.start())
    event_loop.run_until_complete(server.stop())
    remaining = asyncio.Task.all_tasks(loop=event_loop)
@@ -52,7 +53,8 @@ def test_02_forked_join_realm(servicefactory):
 @mark.asyncio
 async def test_03_asyncio_join_realm(servicefactory, event_loop, crossbar_router_running):
 
-   server = servicefactory(loop=event_loop)
+   server = servicefactory()
+   server.set_loop(event_loop)
    await server.start()
    await asyncio.sleep(6, loop=event_loop)
    await server.stop()
@@ -61,7 +63,8 @@ async def test_03_asyncio_join_realm(servicefactory, event_loop, crossbar_router
 @mark.asyncio
 async def test_031_asyncio_join_realm(servicefactory, event_loop):
 
-   server = servicefactory(loop=event_loop)
+   server = servicefactory()
+   server.set_loop(event_loop)
 
    async with CrossbarRouter(event_loop) as cb:
       await server.start()
@@ -70,11 +73,11 @@ async def test_031_asyncio_join_realm(servicefactory, event_loop):
    await asyncio.sleep(1, loop=event_loop)
 
 
-
 @mark.asyncio
 async def test_04_rejoin_realm(servicefactory, event_loop):
 
-   server = servicefactory(loop=event_loop)
+   server = servicefactory()
+   server.set_loop(event_loop)
 
    async with CrossbarRouter(event_loop) as cb:
       await server.start()

@@ -20,10 +20,9 @@ class AsyncioServiceBase:
    _loop = None
    _external_loop = False
 
-   def __init__(self, loop=None):
-      if loop:
-         self._loop = loop
-         self._external_loop = True
+   def set_loop(self, loop):
+      self._loop = loop
+      self._external_loop = True
 
    async def _setup(self):
       self._logger.debug("%s setting up" % self.__class__.__name__)

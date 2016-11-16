@@ -27,7 +27,8 @@ async def test_01_internal_loop_reconnect(servicefactory, event_loop):
 
    # mock server started
 
-   server = servicefactory(loop=event_loop)
+   server = servicefactory()
+   server.set_loop(event_loop)
    await server.start()
 
    # client started, let things go smooth for a while
