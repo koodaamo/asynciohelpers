@@ -4,8 +4,8 @@ Server implementations that will be tested.
 
 import asyncio
 from asynciohelpers.util import loggerprovider, wamp_configured
-from asynciohelpers.service import AsyncioConnectingServiceBase
-from asynciohelpers.service import AsyncioReConnectingServiceBase
+from asynciohelpers.service import AsyncioConnecting
+from asynciohelpers.service import AsyncioReConnecting
 from asynciohelpers.wamp import WAMPServiceMixin
 from asynciohelpers.testing import TransportClientProtocol
 from .config import TEST_HTTP_HOST, TEST_WAMP_HOST, TEST_WAMP_PORT, TEST_HTTP_PORT, LOGLEVEL
@@ -13,7 +13,7 @@ from .components import WAMPComponent
 
 
 @loggerprovider
-class ConnectingAsyncioServer(AsyncioConnectingServiceBase):
+class ConnectingAsyncioServer(AsyncioConnecting):
 
    _host = TEST_HTTP_HOST
    _port = TEST_HTTP_PORT
@@ -23,7 +23,7 @@ class ConnectingAsyncioServer(AsyncioConnectingServiceBase):
 
 
 @loggerprovider
-class ReConnectingAsyncioServer(AsyncioReConnectingServiceBase):
+class ReConnectingAsyncioServer(AsyncioReConnecting):
 
    _host = TEST_HTTP_HOST
    _port = TEST_HTTP_PORT
@@ -41,7 +41,7 @@ class ReConnectingAsyncioServer(AsyncioReConnectingServiceBase):
 
 @loggerprovider
 @wamp_configured
-class ConnectingWAMPService(WAMPServiceMixin, AsyncioConnectingServiceBase):
+class ConnectingWAMPService(WAMPServiceMixin, AsyncioConnecting):
 
    wmp_url = "ws://%s:%i/ws" % (TEST_WAMP_HOST, TEST_WAMP_PORT)
    wmp_realm = "realm1"
@@ -54,7 +54,7 @@ class ConnectingWAMPService(WAMPServiceMixin, AsyncioConnectingServiceBase):
 
 @loggerprovider
 @wamp_configured
-class ReConnectingWAMPService(WAMPServiceMixin, AsyncioReConnectingServiceBase):
+class ReConnectingWAMPService(WAMPServiceMixin, AsyncioReConnecting):
 
    wmp_url = "ws://%s:%i/ws" % (TEST_WAMP_HOST, TEST_WAMP_PORT)
    wmp_realm = "realm1"

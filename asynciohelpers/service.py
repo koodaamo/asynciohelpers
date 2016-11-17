@@ -9,7 +9,7 @@ from .util import loggerprovider
 
 
 
-class AsyncioServiceBase:
+class AsyncioBase:
    "base SIGTERM-stoppable base class that just sets up and runs the loop"
 
    # these three required per the ABC
@@ -93,7 +93,7 @@ class AsyncioServiceBase:
 
 
 
-class AsyncioConnectingServiceBase(AsyncioServiceBase):
+class AsyncioConnecting(AsyncioBase):
    "asyncio service that connects a given transport"
 
    _transport_factory = None # protocol class, or other instance factory
@@ -126,7 +126,7 @@ class AsyncioConnectingServiceBase(AsyncioServiceBase):
 
 
 
-class AsyncioReConnectingServiceBase(AsyncioConnectingServiceBase):
+class AsyncioReConnecting(AsyncioConnecting):
    "asyncio service that connects a given transport"
 
    async def _connect(self):

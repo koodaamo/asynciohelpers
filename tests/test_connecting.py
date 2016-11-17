@@ -1,7 +1,7 @@
 import sys, time, asyncio, logging, signal, multiprocessing, inspect
 from pytest import raises, mark, fixture
 
-from asynciohelpers.service import AsyncioServiceBase
+from asynciohelpers.service import AsyncioBase
 from asynciohelpers.exceptions import SetupException
 from asynciohelpers.testing import get_socket_server
 
