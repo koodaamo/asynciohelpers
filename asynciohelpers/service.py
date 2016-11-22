@@ -1,12 +1,7 @@
-from functools import partial
 from contextlib import suppress
 import asyncio
 from concurrent.futures import CancelledError
-import txaio
-from .abcs import ServiceBaseABC
 from .exceptions import SetupException
-from .util import loggerprovider
-
 
 
 class AsyncioBase:
@@ -28,23 +23,27 @@ class AsyncioBase:
       self._logger.debug("%s setting up" % self.__class__.__name__)
 
    async def _run(self):
-      self._logger.debug("%s running" % self.__class__.__name__)
+      self._logger.debug("%s runner running" % self.__class__.__name__)
+
+   async def _wait(self):
+      self._logger.debug("%s waiter started" % self.__class__.__name__)
 
    async def _teardown(self):
-      self._logger.debug("%s tearing down" % self.__class__.__name__)
+      self._logger.debug("%s stopping runner & waiter tasks" % self.__class__.__name__)
 
       with suppress(asyncio.CancelledError):
-         self._runner.cancel()
+         self._run_task.cancel()
+         self._wait_task.cancel()
+
+      self._transport.close()
+      await asyncio.sleep(0)
 
 
    def start(self):
 
       self._loop = self._loop or asyncio.get_event_loop()
-      txaio.use_asyncio()
-      txaio.config.loop = self._loop
-      #txaio.start_logging(level='info')
+      self._logger.debug("%s start requested" % self.__class__.__name__)
 
-      self._logger.info("%s start requested" % self.__class__.__name__)
       self._closing = False
       self._started = asyncio.Future(loop=self._loop)
 
@@ -53,43 +52,69 @@ class AsyncioBase:
       def setup_finished(future):
          exc = future.exception()
          if exc:
-            self._logger.warn("setup failed, stopping immediately: %s" % str(exc))
+            self._logger.error("setup failed, stopping immediately: %s" % str(exc))
             setup_failed = SetupException("failure: %s" % str(exc))
             self._started.set_exception(setup_failed)
          else:
-            self._runner = self._loop.create_task(self._run())
+            self._logger.debug("setup completed ok")
+            self._wait_task = self._loop.create_task(self._wait())
+            self._run_task = self._loop.create_task(self._run())
             self._started.set_result(True)
 
       self._setup_task = self._loop.create_task(self._setup())
 
       if self._external_loop:
          self._setup_task.add_done_callback(setup_finished)
+         self._wait_task = self._loop.create_task(self._wait())
+         self._run_task = self._loop.create_task(self._run())
          return self._started
       else:
          try:
             self._loop.run_until_complete(self._setup_task)
          except Exception as exc:
+            self._logger.warn("setup failed, stopping: %s" % str(exc))
             self._loop.call_soon_threadsafe(self._loop.stop)
-            self._logger.warn("setup failed, stopping immediately: %s" % str(exc))
             raise SetupException("failure: %s" % str(exc)) from None
-         self._loop.run_forever()
-         self._closing = True
+
+         # when the waiter completes, the runner gets cancelled
+         self._wait_task = self._loop.create_task(self._wait())
+         self._run_task = self._loop.create_task(self._run())
+
+         def wait_completed(task):
+            self._run_task.cancel()
+
+         self._wait_task.add_done_callback(wait_completed)
+
+         try:
+            self._loop.run_until_complete(asyncio.gather(self._wait_task, self._run_task))
+         except Exception as exc:
+            self._logger.warn(exc)
+
+         # we can be stopped either via SvcStop -> waiter fallback, or
+         # direct call to stop(), so _closing synchronizes action
+
+         if not self._closing:
+            self.stop()
+
+         self._loop.close()
+         self._logger.warn("%s is now shut down" % self.__class__.__name__)
 
 
    def stop(self, *args, **kwargs):
-      self._logger.info("%s stop requested" % self.__class__.__name__)
-      self._stopped = asyncio.Future(loop=self._loop)
       self._closing = True
-
-      def on_teardown_complete(future):
-         self._stopped.set_result(True)
-
-      self._loop.create_task(self._teardown()).add_done_callback(on_teardown_complete)
+      self._teardown_task = self._loop.create_task(self._teardown())
 
       if self._external_loop:
-         return self._stopped
+         return self._teardown_task
       else:
-         self._loop.call_soon_threadsafe(self._loop.stop)
+         try:
+            self._loop.run_until_complete(self._teardown_task)
+         except Exception as exc:
+            self._logger.warn(exc)
+         try:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+         except Exception as exc:
+            self._logger.warn(exc)
 
 
 
@@ -106,23 +131,27 @@ class AsyncioConnecting(AsyncioBase):
       kwargs = {"host": self._host, "port": self._port, "ssl": self._ssl}
       connector = self._loop.create_connection(*args, **kwargs)
       (self._transport, self._protocol) = await connector
-      self._logger.debug("connected transport %s" % self._transport)
       self._protocol.is_closed = asyncio.Future(loop=self._loop)
+      self._logger.debug("connected transport (%s)" % self._transport.__class__.__name__)
 
    async def _setup(self):
       self._logger.debug("setting up")
       await self._connect()
 
    async def _teardown(self):
-      self._logger.debug("teardown")
+      self._logger.debug("teardown starting")
 
+      # wait for base class to cancel tasks
+      await super()._teardown()
+
+      # wait for the transport to close
+      self._logger.debug("closing transport")
       try:
          self._transport.close()
       except Exception as exc:
          self._logger.warn("cannot close transport: %s" % exc)
 
-      await self._protocol.is_closed
-      await super()._teardown()
+      await self._protocol.is_closed # protocol implementation MUST set this
 
 
 
@@ -148,7 +177,6 @@ class AsyncioReConnecting(AsyncioConnecting):
             self._logger.error("unhandled error %s: %s" % (type(exc), exc))
          else:
             self._protocol.is_closed.add_done_callback(self._reconnect)
-            self._logger.debug("transport connected")
             break
          await asyncio.sleep(2, loop=self._loop)
 
@@ -156,10 +184,4 @@ class AsyncioReConnecting(AsyncioConnecting):
       if not self._closing:
          self._logger.error("connection lost, reconnecting")
          reconnect = self._loop.create_task(self._connect())
-
-         def reconnected(future):
-            runner = self._loop.create_task(self._run())
-
-         reconnect.add_done_callback(reconnected)
-
 
