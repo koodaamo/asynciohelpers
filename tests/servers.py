@@ -32,11 +32,17 @@ class ReConnectingAsyncioServer(AsyncioReConnecting):
    LOGLEVEL = LOGLEVEL
 
    async def _run(self):
-      self._logger.debug("running")
-      while True:
+      self._logger.debug("runner running")
+
+      while not self._closing:
          self._logger.debug("saying hello")
-         self._transport.write(b"Hello world!")
+         try:
+            self._transport.write(b"Hello world!")
+         except Exception as exc:
+            self._logger.warn("could not send: %s" % exc)
          await asyncio.sleep(2, loop=self._loop)
+
+      self._logger.warn("runner stopped")
 
 
 @loggerprovider

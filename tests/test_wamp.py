@@ -20,13 +20,27 @@ def servicefactory(request):
    return
 
 
-def test_01_join_realm(servicefactory, crossbar_router_running, event_loop):
+def test_01_join_realm(servicefactory, event_loop, crossbar_router_running):
+
+   # in this case, autobahn requires explicit configuration of the loop via txaio
+   # alternatively, use the regular loop (in some cases may need to init txaio even then)
+
+   import txaio
+   txaio.use_asyncio()
+   txaio.config.loop = event_loop
+
+   loop = event_loop
+
    server = servicefactory()
-   server.set_loop(event_loop)
-   event_loop.run_until_complete(server.start())
-   event_loop.run_until_complete(server.stop())
-   remaining = asyncio.Task.all_tasks(loop=event_loop)
-   event_loop.run_until_complete(asyncio.gather(*remaining))
+   server.set_loop(loop)
+   time.sleep(1)
+   print("--- running server start() ---")
+   loop.run_until_complete(server.start())
+   time.sleep(1)
+   print("--- running server stop() ---")
+   loop.run_until_complete(server.stop())
+   remaining = asyncio.Task.all_tasks(loop=loop)
+   loop.run_until_complete(asyncio.gather(*remaining))
 
 
 def test_02_forked_join_realm(servicefactory):
@@ -40,8 +54,9 @@ def test_02_forked_join_realm(servicefactory):
    s = multiprocessing.Process(target=run_server)
 
    with crossbar_router() as cb:
+      time.sleep(1)
       s.start()
-      time.sleep(2)
+      time.sleep(1)
       s.terminate()
       s.join()
 
@@ -53,39 +68,73 @@ def test_02_forked_join_realm(servicefactory):
 @mark.asyncio
 async def test_03_asyncio_join_realm(servicefactory, event_loop, crossbar_router_running):
 
+   # in this case, autobahn requires explicit configuration of the loop via txaio
+   # alternatively, use the regular loop (in some cases may need to init txaio even then)
+
+   import txaio
+   txaio.use_asyncio()
+   txaio.config.loop = event_loop
+
    server = servicefactory()
    server.set_loop(event_loop)
+   await asyncio.sleep(1, loop=event_loop)
+   print("--- waiting for server start() ---")
    await server.start()
-   await asyncio.sleep(6, loop=event_loop)
+   await asyncio.sleep(2, loop=event_loop)
+   print("--- waiting for server stop() ---")
    await server.stop()
 
 
 @mark.asyncio
 async def test_031_asyncio_join_realm(servicefactory, event_loop):
 
+   # in this case, autobahn requires explicit configuration of the loop via txaio
+   # alternatively, use the regular loop (in some cases may need to init txaio even then)
+
+   import txaio
+   txaio.use_asyncio()
+   txaio.config.loop = event_loop
+
    server = servicefactory()
    server.set_loop(event_loop)
+   await asyncio.sleep(1, loop=event_loop)
 
    async with CrossbarRouter(event_loop) as cb:
+      await asyncio.sleep(1, loop=event_loop)
+      print("--- calling server start() ---")
       await server.start()
+      print("--- calling server stop() ---")
       await server.stop()
 
    await asyncio.sleep(1, loop=event_loop)
 
 
+
 @mark.asyncio
 async def test_04_rejoin_realm(servicefactory, event_loop):
+
+   # in this case, autobahn requires explicit configuration of the loop via txaio
+   # alternatively, use the regular loop (in some cases may need to init txaio even then)
+
+   import txaio
+   txaio.use_asyncio()
+   txaio.config.loop = event_loop
+
 
    server = servicefactory()
    server.set_loop(event_loop)
 
-   async with CrossbarRouter(event_loop) as cb:
+   async with CrossbarRouter() as cb:
+      print("----- router starting, waiting for connect: -------")
+      await asyncio.sleep(2, loop=event_loop)
       await server.start()
 
-   print("-------------\n router stopped, waiting a while...\n-----------")
+   print("------- router stopped, connection lost: -------")
+
    await asyncio.sleep(1, loop=event_loop)
 
-   async with CrossbarRouter(event_loop) as cb:
+   async with CrossbarRouter() as cb:
+      print("------ router starting again, waiting for reconnect: -------")
       await asyncio.sleep(2, loop=event_loop)
       await server.stop()
 

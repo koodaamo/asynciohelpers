@@ -77,7 +77,7 @@ def crossbar_router_running():
    CBCMD = os.environ.get("CROSSBAR")
    assert CBCMD, "Must have environment variable CROSSBAR set to crossbar binary path"
    cdir = os.path.dirname(__file__)
-   cbp = subprocess.Popen([CBCMD, "start", "--cbdir", cdir], stdout=subprocess.DEVNULL)
+   cbp = subprocess.Popen([CBCMD, "start", "--cbdir", cdir],  stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
    print("\ngiving some time for the WAMP router to start...\n")
    time.sleep(3)
    yield cbp

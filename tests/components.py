@@ -14,8 +14,4 @@ class WAMPComponent(ApplicationSession):
 
    @logged
    def onJoin(self, details):
-      self._transport._session_joined.set_result(True)
-
-   @logged
-   def onConnect(self):
-      self.join(self.config.realm)
+      self._transport.factory._session_joined.set_result(True)

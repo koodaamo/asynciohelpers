@@ -25,7 +25,7 @@ def servicefactory(request):
 
 
 @mark.asyncio(forbid_global_loop=True)
-async def test_01_internal_loop_connect(servicefactory, event_loop):
+async def test_01_external_loop_connect(servicefactory, event_loop):
 
    def start_mock():
       "start a dummy TCP/IP socket server to connect to"
@@ -42,7 +42,7 @@ async def test_01_internal_loop_connect(servicefactory, event_loop):
    mock.close()
 
 
-def test_02_external_loop_connect(servicefactory, with_mock_server):
+def test_02_internal_loop_connect(servicefactory, with_mock_server):
 
    def connect(factory, evt):
       policy = asyncio.get_event_loop_policy()
@@ -55,13 +55,14 @@ def test_02_external_loop_connect(servicefactory, with_mock_server):
       except SetupException as exc:
          evt.set()
       except:
-         raise Exception("unexpected expetion")
+         raise Exception("unexpected exception")
+
 
    evt = multiprocessing.Event() # failure flag
    sp = multiprocessing.Process(target=connect, args=(servicefactory, evt))
-   time.sleep(0.5)
+   time.sleep(1)
    sp.start()
-   time.sleep(0.1)
+   time.sleep(1)
    sp.terminate()
    sp.join()
    assert not evt.is_set()
