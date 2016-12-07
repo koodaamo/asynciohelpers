@@ -39,3 +39,15 @@ class WAMPServiceMixin:
          session._loop = self._loop
          return session
 
+
+   async def _wait(self):
+      "default waiter"
+      while True:
+         await asyncio.sleep(900, self._loop)
+         self._logger.info("waiting, still alive...")
+
+   async def _run(self):
+      "default runner"
+      while True:
+         await asyncio.sleep(900, self._loop)
+         self._logger.info("running, still alive...")
