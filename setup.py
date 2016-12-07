@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 import sys, os
 
-version = '0.2'
+version = "0.3rc0"
 
 setup(name='asynciohelpers',
       version=version,
