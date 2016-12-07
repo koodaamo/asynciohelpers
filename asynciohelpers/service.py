@@ -7,6 +7,8 @@ from .exceptions import SetupException
 class AsyncioBase:
    "base SIGTERM-stoppable base class that just sets up and runs the loop"
 
+   RESTART_DELAY = 15 # seconds until waiter & runner are restarted
+
    # these three required per the ABC
    _host = None
    _port = None
@@ -76,26 +78,28 @@ class AsyncioBase:
             self._loop.call_soon_threadsafe(self._loop.stop)
             raise SetupException("failure: %s" % str(exc)) from None
 
-         # when the waiter completes, the runner gets cancelled
-         self._wait_task = self._loop.create_task(self._wait())
-         self._run_task = self._loop.create_task(self._run())
-
          def wait_completed(task):
             self._run_task.cancel()
 
-         self._wait_task.add_done_callback(wait_completed)
-
-         try:
-            self._loop.run_until_complete(asyncio.gather(self._wait_task, self._run_task))
-         except Exception as exc:
-            self._logger.warn(exc)
-
          # we can be stopped either via SvcStop -> waiter fallback, or
          # direct call to stop(), so _closing synchronizes action
+         while not self._closing:
 
-         if not self._closing:
-            self.stop()
+            # when the waiter completes, the runner gets cancelled
+            self._wait_task = self._loop.create_task(self._wait())
+            self._run_task = self._loop.create_task(self._run())
+            self._wait_task.add_done_callback(wait_completed)
 
+            try:
+               self._loop.run_until_complete(asyncio.gather(self._wait_task, self._run_task))
+            except CancelledError:
+               self._logger.debug("waiter/runner cancelled")
+            except Exception as exc:
+               self._logger.error("wait/run task failure: %s" % str(exc))
+            restart_waiter = asyncio.sleep(self.RESTART_DELAY, loop=self._loop)
+            self._loop.run_until_complete(restart_waiter)
+
+         self.stop()
          self._loop.close()
          self._logger.warn("%s is now shut down" % self.__class__.__name__)
 
@@ -158,15 +162,19 @@ class AsyncioConnecting(AsyncioBase):
 class AsyncioReConnecting(AsyncioConnecting):
    "asyncio service that connects a given transport"
 
+   RECONNECT_DELAY = 2 # seconds
+
    async def _connect(self):
       "after super() setup has run, register a protocol close (re)connect callback"
+
+      await asyncio.sleep(self.RECONNECT_DELAY, loop=self._loop)
 
       while not self._closing:
          self._logger.debug("attempting connect")
          try:
             result = await super()._connect()
          except ConnectionError as exc:
-            self._logger.error("connection refused, retrying: %s" % str(exc))
+            self._logger.warn("connection refused, retrying: %s" % str(exc))
          except CancelledError as exc:
             self._logger.error("connect cancelled, stopping: %s" % str(exc))
             break
@@ -178,10 +186,12 @@ class AsyncioReConnecting(AsyncioConnecting):
          else:
             self._protocol.is_closed.add_done_callback(self._reconnect)
             break
-         await asyncio.sleep(2, loop=self._loop)
+         await asyncio.sleep(self.RECONNECT_DELAY, loop=self._loop)
 
    def _reconnect(self, future):
       if not self._closing:
-         self._logger.error("connection lost, reconnecting")
+         self._logger.warn("connection lost, reconnecting")
          reconnect = self._loop.create_task(self._connect())
+      else:
+         self._logger.warn("already closing, not reconnecting")
 
