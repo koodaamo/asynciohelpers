@@ -21,17 +21,6 @@ class AsyncioRunning:
       self._loop = loop
       self._external_loop = True
 
-   async def _setup(self):
-      self._logger.debug("%s setting up" % self.__class__.__name__)
-
-   async def _run(self):
-      self._logger.debug("%s runner running" % self.__class__.__name__)
-
-   async def _wait(self):
-      self._logger.debug("%s waiter started" % self.__class__.__name__)
-
-   async def _teardown(self):
-      self._logger.debug("%s stopping runner & waiter tasks" % self.__class__.__name__)
 
       with suppress(asyncio.CancelledError):
          self._run_task.cancel()
