@@ -15,6 +15,22 @@ from .util import logmethod, loggerprovider, logged
 LOGLEVEL = logging.DEBUG
 
 
+class LoggingServiceImpl():
+   "provide the implementables"
+
+   async def _setup(self):
+      self._logger.debug("%s setting up" % self.__class__.__name__)
+
+   async def _run(self):
+      self._logger.debug("%s runner running" % self.__class__.__name__)
+
+   async def _wait(self):
+      self._logger.debug("%s waiter started" % self.__class__.__name__)
+
+   async def _teardown(self):
+      self._logger.debug("%s tearing down" % self.__class__.__name__)
+
+
 @logmethod("connection_lost")
 @loggerprovider
 class MockTransportServerProtocol(asyncio.Protocol):
