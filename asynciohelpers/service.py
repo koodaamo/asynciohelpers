@@ -139,7 +139,7 @@ class AsyncioConnecting(AsyncioRunning):
       self._logger.debug("connected transport (%s)" % self._transport.__class__.__name__)
 
    async def _setup(self):
-      self._logger.debug("setting up")
+      self._logger.debug("connecting")
       await self._connect()
 
    async def _teardown(self):
@@ -155,8 +155,8 @@ class AsyncioConnecting(AsyncioRunning):
       except Exception as exc:
          self._logger.warn("cannot close transport: %s" % exc)
 
-      await self._protocol.is_closed # protocol implementation MUST set this
-
+      # protocol implementation MUST set this:
+      await self._protocol.is_closed
 
 
 class AsyncioReConnecting(AsyncioConnecting):
