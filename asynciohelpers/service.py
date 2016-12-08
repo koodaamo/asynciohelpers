@@ -4,8 +4,8 @@ from concurrent.futures import CancelledError
 from .exceptions import SetupException
 
 
-class AsyncioBase:
-   "base SIGTERM-stoppable base class that just sets up and runs the loop"
+class AsyncioRunning:
+   "base runner class that sets up and runs the loop & payload"
 
    RESTART_DELAY = 15 # seconds until waiter & runner are restarted
 
@@ -122,7 +122,7 @@ class AsyncioBase:
 
 
 
-class AsyncioConnecting(AsyncioBase):
+class AsyncioConnecting(AsyncioRunning):
    "asyncio service that connects a given transport"
 
    _transport_factory = None # protocol class, or other instance factory
