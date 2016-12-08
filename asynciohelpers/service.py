@@ -17,17 +17,20 @@ class AsyncioRunning:
    _loop = None
    _external_loop = False
 
+
    def set_loop(self, loop):
       self._loop = loop
       self._external_loop = True
 
 
-      with suppress(asyncio.CancelledError):
+   def _on_wait_completed(self, *args):
+      "also stop the runner when waiting is complete"
+      self._closing = True
+      try:
          self._run_task.cancel()
-         self._wait_task.cancel()
-
-      self._transport.close()
-      await asyncio.sleep(0)
+      except:
+         # it's possible the runnables have not been created yet...
+         pass
 
 
    def start(self):
@@ -40,74 +43,89 @@ class AsyncioRunning:
 
       # start the runner coro after setup is done, or exit if error
 
-      def setup_finished(future):
+      self._wait_task = self._loop.create_task(self._wait())
+      self._wait_task.add_done_callback(self._on_wait_completed)
+
+      def setup_complete(future):
          exc = future.exception()
          if exc:
             self._logger.error("setup failed, stopping immediately: %s" % str(exc))
             setup_failed = SetupException("failure: %s" % str(exc))
             self._started.set_exception(setup_failed)
          else:
-            self._logger.debug("setup completed ok")
-            self._wait_task = self._loop.create_task(self._wait())
+            self._logger.debug("setup completed ok, scheduling runner")
             self._run_task = self._loop.create_task(self._run())
             self._started.set_result(True)
 
       self._setup_task = self._loop.create_task(self._setup())
+      self._setup_task.add_done_callback(setup_complete)
 
       if self._external_loop:
-         self._setup_task.add_done_callback(setup_finished)
-         self._wait_task = self._loop.create_task(self._wait())
-         self._run_task = self._loop.create_task(self._run())
          return self._started
-      else:
+
+      # run the setup
+      try:
+         self._loop.run_until_complete(self._setup_task)
+      except Exception as exc:
+         self._wait_task.cancel()
+         self._loop.call_soon_threadsafe(self._loop.stop)
+
+      # run the main loop; we can be stopped either by waiter completing & canceling
+      # runner or by stop(), which actually just cancels the waiter
+
+      while not self._closing:
+
          try:
-            self._loop.run_until_complete(self._setup_task)
+            self._loop.run_until_complete(self._run_task)
+         except CancelledError:
+            self._logger.info("runner cancelled")
+            break
+         except KeyboardInterrupt:
+            self._logger.info("runner terminated by user action")
+            self._wait_task.cancel()
+            break
          except Exception as exc:
-            self._logger.warn("setup failed, stopping: %s" % str(exc))
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            raise SetupException("failure: %s" % str(exc)) from None
+            self._logger.error("runner failure: %s" % str(exc))
+            self._delaying = asyncio.sleep(self.RESTART_DELAY, loop=self._loop)
+            self._loop.run_until_complete(self._delaying)
+            if not self._closing:
+               self._run_task = self._loop.create_task(self._run())
 
-         def wait_completed(task):
-            self._run_task.cancel()
+      self._teardown_task = self._loop.create_task(self._teardown())
 
-         # we can be stopped either via SvcStop -> waiter fallback, or
-         # direct call to stop(), so _closing synchronizes action
-         while not self._closing:
+      try:
+         self._loop.run_until_complete(self._teardown_task)
+      except Exception as exc:
+         self._logger.warn("teardown problem: %s" % exc)
 
-            # when the waiter completes, the runner gets cancelled
-            self._wait_task = self._loop.create_task(self._wait())
-            self._run_task = self._loop.create_task(self._run())
-            self._wait_task.add_done_callback(wait_completed)
+      remaining = asyncio.Task.all_tasks()
+      for task in remaining:
+         task.cancel()
 
-            try:
-               self._loop.run_until_complete(asyncio.gather(self._wait_task, self._run_task))
-            except CancelledError:
-               self._logger.debug("waiter/runner cancelled")
-            except Exception as exc:
-               self._logger.error("wait/run task failure: %s" % str(exc))
-            restart_waiter = asyncio.sleep(self.RESTART_DELAY, loop=self._loop)
-            self._loop.run_until_complete(restart_waiter)
+      try:
+         self._loop.run_until_complete(asyncio.gather(*remaining))
+      except CancelledError:
+         pass
+      except Exception as exc:
+         self._logger.warn("cleanup failure: %s" % exc)
+      try:
+         self._loop.call_soon_threadsafe(self._loop.stop)
+      except Exception as exc:
+         self._logger.warn(str(exc))
 
-         self.stop()
-         self._loop.close()
-         self._logger.warn("%s is now shut down" % self.__class__.__name__)
+      self._loop.close()
+      self._logger.info("%s is now shut down" % self.__class__.__name__)
 
 
    def stop(self, *args, **kwargs):
-      self._closing = True
-      self._teardown_task = self._loop.create_task(self._teardown())
+      "cancel the task and return the stop future if external loop"
+
+      self._logger.info("stop requested")
+      self._wait_task.cancel()
 
       if self._external_loop:
+         self._teardown_task = self._loop.create_task(self._teardown())
          return self._teardown_task
-      else:
-         try:
-            self._loop.run_until_complete(self._teardown_task)
-         except Exception as exc:
-            self._logger.warn(exc)
-         try:
-            self._loop.call_soon_threadsafe(self._loop.stop)
-         except Exception as exc:
-            self._logger.warn(exc)
 
 
 
@@ -132,12 +150,6 @@ class AsyncioConnecting(AsyncioRunning):
       await self._connect()
 
    async def _teardown(self):
-      self._logger.debug("teardown starting")
-
-      # wait for base class to cancel tasks
-      await super()._teardown()
-
-      # wait for the transport to close
       self._logger.debug("closing transport")
       try:
          self._transport.close()
@@ -146,6 +158,7 @@ class AsyncioConnecting(AsyncioRunning):
 
       # protocol implementation MUST set this:
       await self._protocol.is_closed
+
 
 
 class AsyncioReConnecting(AsyncioConnecting):
