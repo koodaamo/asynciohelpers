@@ -162,7 +162,7 @@ class AsyncioConnecting(AsyncioRunning):
 class AsyncioReConnecting(AsyncioConnecting):
    "asyncio service that connects a given transport"
 
-   RECONNECT_DELAY = 2 # seconds
+   RECONNECT_DELAY = 5 # seconds
 
    async def _connect(self):
       "after super() setup has run, register a protocol close (re)connect callback"
