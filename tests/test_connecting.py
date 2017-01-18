@@ -1,48 +1,24 @@
-import sys, time, asyncio, logging, signal, multiprocessing, inspect
-from pytest import raises, mark, fixture
+import asyncio
+import multiprocessing
+import signal
+import time
 
-from asynciohelpers.service import AsyncioBase
-from asynciohelpers.exceptions import SetupException
-from asynciohelpers.testing import get_socket_server
+from pytest import mark
+from asynciohelpers.wamp import WAMPSessionTimeoutError
 
-from .fixtures import with_mock_server
 from .servers import ConnectingAsyncioServer, ReConnectingAsyncioServer
 from .servers import ConnectingWAMPService, ReConnectingWAMPService
-from .config import TEST_HOST, TEST_PORT, logger
+from .fixtures import with_mock_server, with_delayed_mock_server
 
 
-tested_services = (ConnectingAsyncioServer, ReConnectingAsyncioServer, )
-
-#ConnectingWAMPService, ReConnectingWAMPService)
-
-
-@fixture(scope="module", params=tested_services)
-def servicefactory(request):
-   "run tests for each server"
-   yield request.param
-   return
+test_all = (
+   ConnectingAsyncioServer, ReConnectingAsyncioServer,
+   ConnectingWAMPService, ReConnectingWAMPService
+)
 
 
-
-@mark.asyncio(forbid_global_loop=True)
-async def test_01_external_loop_connect(servicefactory, event_loop):
-
-   def start_mock():
-      "start a dummy TCP/IP socket server to connect to"
-      server_coro = get_socket_server(event_loop, TEST_HOST, TEST_PORT)
-      return server_coro
-
-   mock = await start_mock()
-
-   server = servicefactory()
-   server.set_loop(event_loop)
-   await server.start()
-   await server.stop()
-
-   mock.close()
-
-
-def test_02_internal_loop_connect(servicefactory, with_mock_server):
+@mark.parametrize('serviceklass', test_all)
+def test_01_connect(serviceklass, with_mock_server):
 
    def connect(factory, evt):
       policy = asyncio.get_event_loop_policy()
@@ -52,20 +28,66 @@ def test_02_internal_loop_connect(servicefactory, with_mock_server):
 
       try:
          server.start()
-      except SetupException as exc:
+      except WAMPSessionTimeoutError as exc:
+         pass
+      except Exception as exc:
+         print(exc)
          evt.set()
-      except:
-         raise Exception("unexpected exception")
 
 
    evt = multiprocessing.Event() # failure flag
-   sp = multiprocessing.Process(target=connect, args=(servicefactory, evt))
-   time.sleep(1)
+   sp = multiprocessing.Process(target=connect, args=(serviceklass, evt))
    sp.start()
-   time.sleep(1)
+   time.sleep(3)
    sp.terminate()
    sp.join()
    assert not evt.is_set()
 
 
+@mark.parametrize('serviceklass', test_all)
+def test_02_connect_fail(serviceklass):
 
+   def fail(factory, evt):
+      policy = asyncio.get_event_loop_policy()
+      policy.set_event_loop(policy.new_event_loop())
+      server = factory()
+      try:
+         server.start()
+      except ConnectionRefusedError as exc:
+         evt.set()
+      except ConnectionRefusedError as exc:
+         evt.set()
+
+   evt = multiprocessing.Event() # failure flag
+
+   # start the server in another process and watch it fail
+   sp = multiprocessing.Process(target=fail, args=(serviceklass, evt))
+   sp.start()
+   sp.join()
+
+   assert evt.is_set()
+
+
+@mark.parametrize('serviceklass', test_reconnecting)
+def test_03_reconnect(serviceklass, with_delayed_mock_server):
+
+   def connect(factory, evt):
+      policy = asyncio.get_event_loop_policy()
+      policy.set_event_loop(policy.new_event_loop())
+      server = factory()
+      signal.signal(signal.SIGTERM, server.stop)
+
+      try:
+         server.start()
+      except WAMPSessionTimeoutError:
+         pass
+      except Exception as exc:
+         evt.set()
+
+   evt = multiprocessing.Event() # failure flag
+   sp = multiprocessing.Process(target=connect, args=(serviceklass, evt))
+   sp.start()
+   time.sleep(8)
+   sp.terminate()
+   sp.join()
+   assert not evt.is_set()

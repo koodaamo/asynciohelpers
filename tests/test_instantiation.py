@@ -1,35 +1,24 @@
-import sys, time, asyncio, logging, signal, multiprocessing, inspect
-from pytest import raises, mark, fixture
+import asyncio
+import multiprocessing
+import signal
+import time
 
-from asynciohelpers.service import AsyncioBase
-from asynciohelpers.exceptions import SetupException
+from pytest import mark
+from asynciohelpers.wamp import WAMPSessionTimeoutError
 
-from .fixtures import with_mock_server
 from .servers import ConnectingAsyncioServer, ReConnectingAsyncioServer
 from .servers import ConnectingWAMPService, ReConnectingWAMPService
-from .config import TEST_HOST, TEST_PORT, logger
+from .fixtures import with_mock_server, with_delayed_mock_server
 
 
-tested_services = (ConnectingAsyncioServer,
-                   ReConnectingAsyncioServer,
-                   ConnectingWAMPService,
-                   ReConnectingWAMPService
-                   )
+test_all = (
+   ConnectingAsyncioServer, ReConnectingAsyncioServer,
+   ConnectingWAMPService, ReConnectingWAMPService
+)
 
 
-@fixture(scope="module", params=tested_services)
-def servicefactory(request):
-   "run tests for each server"
-   yield request.param
-   return
-
-
-def test_01_instantiate_succeeds(servicefactory):
+@mark.parametrize('serviceklass', test_all)
+def test_01_instantiate_ok(serviceklass):
    "all servers can be instantiated"
-   assert servicefactory in tested_services
-   servicefactory()
-
-
-
-
+   serviceklass()
 
