@@ -7,7 +7,7 @@ setup(name='asynciohelpers',
       version=version,
       description="Helpers for writing asyncio-based apps",
       long_description="",
-      classifiers=[], # Get strings from http://pypi.python.org/pypi?%3Aaction=list_classifiers
+      classifiers=["Topic :: System :: Networking"],
       keywords='asyncio',
       author='Petri Savolainen',
       author_email='petri.savolainen@koodaamo.fi',
@@ -17,7 +17,7 @@ setup(name='asynciohelpers',
       include_package_data=True,
       zip_safe=False,
       setup_requires=['pytest-runner',],
-      tests_require=['pytest', 'pytest-logging', 'pytest-asyncio'],
+      tests_require=['pytest', 'pytest-logging', 'pytest-runner', 'pytest-pylint'],
       install_requires=[
           # -*- Extra requirements: -*-
       ],
