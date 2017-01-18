@@ -1,131 +1,130 @@
-from contextlib import suppress
+import signal
 import asyncio
+import txaio
 from concurrent.futures import CancelledError
-from .exceptions import SetupException
 
 
 class AsyncioRunning:
    "base runner class that sets up and runs the loop & payload"
 
-   RESTART_DELAY = 15 # seconds until waiter & runner are restarted
+   RUNNER_RESTART_ON_FAIL = True
+   RUNNER_RESTART_ON_COMPLETION = True
+
+   FAILURE_RESTART_DELAY = 5 # seconds
+   COMPLETION_RESTART_DELAY = 5 #
 
    # these three required per the ABC
    _host = None
    _port = None
    _ssl = None
-
    _loop = None
    _external_loop = False
+   _closing = False
+
+   def set_loop(self, loop=None):
+      if loop:
+         self._loop = loop
+         self._external_loop = True
+      elif not self._loop:
+         self._loop = asyncio.get_event_loop()
+      else:
+         pass # if loop exists and was not explicitly given, just fall through
 
 
-   def set_loop(self, loop):
-      self._loop = loop
-      self._external_loop = True
-
-
-   def _on_wait_completed(self, *args):
-      "also stop the runner when waiting is complete"
-      self._closing = True
+   def _on_wait_completed(self, f):
+      "stop the service runner when waiting is complete"
       try:
-         self._run_task.cancel()
+         # the order matters here
+         self._closing = True
+         self._start_task.cancel()
       except:
-         # it's possible the runnables have not been created yet...
          pass
+      self._logger.debug("service (-start) task cancelled")
 
 
-   def start(self):
+   async def _start(self):
 
-      self._loop = self._loop or asyncio.get_event_loop()
-      self._logger.debug("%s start requested" % self.__class__.__name__)
+      # need to explicitly enable txaio :(
+      txaio.use_asyncio()
+      txaio.config.loop = self._loop
 
-      self._closing = False
-      self._started = asyncio.Future(loop=self._loop)
+      # set up signal handler
+      self._loop.add_signal_handler(signal.SIGTERM, self.stop)
 
-      # start the runner coro after setup is done, or exit if error
-
+      # setup background waiter task - note that if the waiter completes early,
+      # it will cancel this present task (_start)
       self._wait_task = self._loop.create_task(self._wait())
       self._wait_task.add_done_callback(self._on_wait_completed)
 
-      def setup_complete(future):
-         exc = future.exception()
-         if exc:
-            self._logger.error("setup failed, stopping immediately: %s" % str(exc))
-            setup_failed = SetupException("failure: %s" % str(exc))
-            self._started.set_exception(setup_failed)
-         else:
-            self._logger.debug("setup completed ok, scheduling runner")
-            self._run_task = self._loop.create_task(self._run())
-            self._started.set_result(True)
-
-      self._setup_task = self._loop.create_task(self._setup())
-      self._setup_task.add_done_callback(setup_complete)
-
-      if self._external_loop:
-         return self._started
-
-      # run the setup
-      try:
-         self._loop.run_until_complete(self._setup_task)
-      except Exception as exc:
-         self._wait_task.cancel()
-         self._loop.call_soon_threadsafe(self._loop.stop)
-
-      # run the main loop; we can be stopped either by waiter completing & canceling
-      # runner or by stop(), which actually just cancels the waiter
+      # call the subclass API to eg. connect to router
+      await self._setup()
 
       while not self._closing:
 
          try:
-            self._loop.run_until_complete(self._run_task)
+            # call the subclass API for running any payload
+            await self._run()
          except CancelledError:
-            self._logger.info("runner cancelled")
-            break
-         except KeyboardInterrupt:
-            self._logger.info("runner terminated by user action")
-            self._wait_task.cancel()
+            self._logger.debug("runner cancelled")
             break
          except Exception as exc:
-            self._logger.error("runner failure: %s" % str(exc))
-            self._delaying = asyncio.sleep(self.RESTART_DELAY, loop=self._loop)
-            self._loop.run_until_complete(self._delaying)
-            if not self._closing:
-               self._run_task = self._loop.create_task(self._run())
+            self._logger.error("runner failed: %s" % str(exc))
+            if self.RUNNER_RESTART_ON_FAIL:
+               self._logger.debug("runner restart in %i seconds" % self.FAILURE_RESTART_DELAY)
+               await asyncio.sleep(self.RESTART_DELAY, loop=self._loop)
+            else:
+               self._closing = True
+         else:
+            self._logger.debug("runner completed")
+            if self.RUNNER_RESTART_ON_COMPLETION:
+               pass
+            else:
+               self._closing = True
 
-      self._teardown_task = self._loop.create_task(self._teardown())
 
+   def start(self):
+      "main public API method for starting the server"
+
+      self._logger.info("%s start requested" % self.__class__.__name__)
+
+      self.set_loop()
+
+      # SERVICE START
+      self._start_task = self._loop.create_task(self._start())
       try:
-         self._loop.run_until_complete(self._teardown_task)
-      except Exception as exc:
-         self._logger.warn("teardown problem: %s" % exc)
-
-      remaining = asyncio.Task.all_tasks()
-      for task in remaining:
-         task.cancel()
-
-      try:
-         self._loop.run_until_complete(asyncio.gather(*remaining))
+         self._loop.run_until_complete(self._start_task)
       except CancelledError:
-         pass
-      except Exception as exc:
-         self._logger.warn("cleanup failure: %s" % exc)
-      try:
-         self._loop.call_soon_threadsafe(self._loop.stop)
-      except Exception as exc:
-         self._logger.warn(str(exc))
+         self._logger.debug("service cancelled")
+      except KeyboardInterrupt:
+         self._logger.debug("service terminated by user action")
 
+      # TEARDOWN
+      self._logger.debug("service teardown starting")
+      self._teardown_task = self._loop.create_task(self._teardown())
+      self._loop.run_until_complete(self._teardown_task)
+
+      # CLEANUP
+      incomplete = [t for t in asyncio.Task.all_tasks() if not t.done()]
+      cleaning = asyncio.gather(*incomplete)
+      cleaning.cancel()
+      try:
+         self._loop.run_until_complete(cleaning)
+      except CancelledError:
+         pass # this should happen, it's ok
+      except Exception as exc:
+         self._logger.warn("task raised %s exception at cleanup: %s" % (type(exc), exc))
+
+      # STOP & CLOSE LOOP
+      self._loop.call_soon_threadsafe(self._loop.stop)
       self._loop.close()
       self._logger.info("%s is now shut down" % self.__class__.__name__)
 
 
    def stop(self, *args, **kwargs):
-      "cancel the task and return the stop future if external loop"
-
+      "main public API method for stopping the server"
       self._logger.info("stop requested")
+      # stop the waiter, which will stop the start task
       self._wait_task.cancel()
-
-      if self._external_loop:
-         self._teardown_task = self._loop.create_task(self._teardown())
-         return self._teardown_task
 
 
 
@@ -136,64 +135,85 @@ class AsyncioConnecting(AsyncioRunning):
    _host = None # FQDN
    _port = None # int
    _ssl = False # bool
+   _timeout = 2
 
    async def _connect(self):
-      args = (self._transport_factory,)
-      kwargs = {"host": self._host, "port": self._port, "ssl": self._ssl}
-      connector = self._loop.create_connection(*args, **kwargs)
-      (self._transport, self._protocol) = await connector
+      self._cargs = {"host": self._host, "port": self._port, "ssl": self._ssl}
+      self._logger.debug("connecting to {host}:{port} (ssl: {ssl})".format(**self._cargs))
+      self._logger.debug("using transport factory: %s" % self._transport_factory)
+      connector = self._loop.create_connection(self._transport_factory, **self._cargs)
+      connector_with_timeout = asyncio.wait_for(connector, self._timeout, loop=self._loop)
+      (self._transport, self._protocol) = await connector_with_timeout
       self._protocol.is_closed = asyncio.Future(loop=self._loop)
       self._logger.debug("connected transport (%s)" % self._transport.__class__.__name__)
+      self._logger.debug("using protocol %s" % self._protocol.__class__.__name__)
 
    async def _setup(self):
-      self._logger.debug("connecting")
       await self._connect()
+      self._logger.info("connected to {host}:{port} (ssl: {ssl})".format(**self._cargs))
 
    async def _teardown(self):
       self._logger.debug("closing transport")
+
       try:
          self._transport.close()
       except Exception as exc:
-         self._logger.warn("cannot close transport: %s" % exc)
+         pass # if we never connected, no point in making noise here
 
-      # protocol implementation MUST set this:
-      await self._protocol.is_closed
+      try:
+         # protocol implementation must set is_closed
+         await self._protocol.is_closed
+      except Exception as exc:
+         pass # if we never connected, no point in making noise here
 
 
 
 class AsyncioReConnecting(AsyncioConnecting):
    "asyncio service that connects a given transport"
 
-   RECONNECT_DELAY = 5 # seconds
+   RECONNECT_DELAY = 1 # seconds
+   RECONNECT_MAX_TIMES = 3
 
    async def _connect(self):
       "after super() setup has run, register a protocol close (re)connect callback"
 
       await asyncio.sleep(self.RECONNECT_DELAY, loop=self._loop)
 
+      RETRIES = 0
+
       while not self._closing:
-         self._logger.debug("attempting connect")
          try:
             result = await super()._connect()
-         except ConnectionError as exc:
-            self._logger.warn("connection refused, retrying: %s" % str(exc))
-         except CancelledError as exc:
-            self._logger.error("connect cancelled, stopping: %s" % str(exc))
-            break
-         except SetupException as exc:
-            self._logger.error("setup failed: %s" % exc)
-            break
          except Exception as exc:
-            self._logger.error("unhandled error %s: %s" % (type(exc), exc))
+            # if connection fails right here, we just wait a bit and retry
+            self._logger.warn("connection attempt failed: %s" % exc)
+
+            if self.RECONNECT_MAX_TIMES:
+               if RETRIES < self.RECONNECT_MAX_TIMES:
+                  retries_left = self.RECONNECT_MAX_TIMES - RETRIES - 1
+                  msg = "reconnecting in %i seconds, %i retries left after that"
+                  self._logger.info(msg % (self.RECONNECT_DELAY, retries_left))
+                  RETRIES += 1
+               else:
+                  self._logger.warn("no connection retries left, giving up!")
+                  raise
+            else:
+               self._logger.info("reconnecting in %i seconds" % self.RECONNECT_DELAY)
+
+            await asyncio.sleep(self.RECONNECT_DELAY, loop=self._loop)
+
          else:
+            # register a reconnect callback if connection fails later
             self._protocol.is_closed.add_done_callback(self._reconnect)
-            break
-         await asyncio.sleep(self.RECONNECT_DELAY, loop=self._loop)
+            return # important to return right here
+
+      # we're closing, so remove the reconnect callback to avoid extra noise
+      self._protocol.is_closed.remove_done_callback(self._reconnect)
+
 
    def _reconnect(self, future):
       if not self._closing:
-         self._logger.warn("connection lost, reconnecting")
          reconnect = self._loop.create_task(self._connect())
       else:
-         self._logger.warn("already closing, not reconnecting")
+         self._logger.debug("already closing, not reconnecting")
 

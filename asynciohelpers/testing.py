@@ -1,6 +1,9 @@
 from abc import abstractmethod, abstractproperty, ABCMeta
 
-import os, time, signal, logging
+import logging
+import os
+import shutil
+import time
 import subprocess
 import asyncio
 import logging
@@ -8,14 +11,16 @@ import socketserver
 import aiohttp
 import aiohttp.server
 
+
 from contextlib import contextmanager
 from asynciohelpers.util import loggerprovider
 from .util import logmethod, loggerprovider, logged
 
+
 LOGLEVEL = logging.DEBUG
 
 
-class LoggingServiceImpl():
+class DummyServiceImpl():
    "provide the implementables"
 
    async def _setup(self):
@@ -23,9 +28,13 @@ class LoggingServiceImpl():
 
    async def _run(self):
       self._logger.debug("%s runner running" % self.__class__.__name__)
+      while True:
+         await asyncio.sleep(2)
 
    async def _wait(self):
       self._logger.debug("%s waiter started" % self.__class__.__name__)
+      while True:
+         await asyncio.sleep(2)
 
    async def _teardown(self):
       self._logger.debug("%s tearing down" % self.__class__.__name__)
@@ -121,12 +130,22 @@ class TransportClientProtocol(CloseNotifyingProtocol, asyncio.Protocol):
 @loggerprovider
 class TCPHandler(socketserver.BaseRequestHandler):
 
+   LOGLEVEL = LOGLEVEL
+
    def handle(self):
-   # self.request is the TCP socket connected to the client
-      while True:
-         data = self.request.recv(1024).strip()
-         if data:
-            self._logger.debug("data received from socket: %s" % data)
+      self._logger.debug("mock handler called")
+      # self.request is the TCP socket connected to the client
+      data = self.request.recv(1024).strip()
+      if data:
+         self._logger.debug("test data received: %s" % data)
+
+
+def get_socketserver(host, port, handler=TCPHandler):
+   server = socketserver.TCPServer((host, port), handler, bind_and_activate=False)
+   server.allow_reuse_address = True
+   server.server_bind()
+   server.server_activate()
+   return server
 
 
 class SingleHTTPRequestHandler(aiohttp.server.ServerHttpProtocol):
@@ -145,44 +164,26 @@ class SingleHTTPRequestHandler(aiohttp.server.ServerHttpProtocol):
       #self.shutdown()
 
 
+def get_crossbar_binary():
+   crossbar = shutil.which("crossbar") or os.environ.get("CROSSBAR")
+   assert crossbar, "No crossbar found. Please point environment variable CROSSBAR to it."
+   return crossbar
+
+
 # context manager to start crossbar
 
 @contextmanager
 def crossbar_router():
-   CBCMD = os.environ.get("CROSSBAR")
-   assert CBCMD, "Must have environment variable CROSSBAR set to crossbar binary path"
+   cb_exe = get_crossbar_binary()
    cdir = os.path.dirname(__file__)
    cdir = cdir[:cdir.rfind(os.path.sep)] + os.path.sep + "tests"
-   cbp = subprocess.Popen([CBCMD, "start", "--cbdir", cdir], stdout=subprocess.DEVNULL)
+   print("using %s as crossbar config dir" % cdir)
+   cbp = subprocess.Popen([cb_exe, "start", "--cbdir", cdir], stdout=subprocess.DEVNULL)
    time.sleep(4)
    yield cbp
    cbp.terminate()
    cbp.wait()
    return
-
-
-# asynchronous version
-
-@loggerprovider
-class CrossbarRouter:
-
-   def __init__(self, loop=None):
-      self.loop = loop or asyncio.get_event_loop()
-
-   async def __aenter__(self):
-      CBCMD = os.environ.get("CROSSBAR")
-      assert CBCMD, "Must have environment variable CROSSBAR set to crossbar binary path"
-      cdir = os.path.dirname(__file__)
-      cdir = cdir[:cdir.rfind(os.path.sep)] + os.path.sep + "tests"
-      coro = asyncio.create_subprocess_exec(CBCMD, "start", "--cbdir", cdir, stdout=subprocess.DEVNULL, loop=self.loop)
-      self.cbp = await coro
-      await asyncio.sleep(3)
-      self._logger.debug("started WAMP router with pid %i" % self.cbp.pid)
-
-   async def __aexit__(self, exc_type, exc, tb):
-      self.cbp.terminate()
-      await self.cbp.wait()
-      await asyncio.sleep(1, loop=self.loop)
 
 
 class NotImplementedABC(metaclass=ABCMeta):

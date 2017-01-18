@@ -1,26 +1,42 @@
 import asyncio
 from autobahn.wamp.types import ComponentConfig
 from autobahn.asyncio.websocket import WampWebSocketClientFactory
-from autobahn.websocket.util import parse_url
 
+
+class WAMPSessionTimeoutError(asyncio.TimeoutError):
+   ""
 
 class WAMPServiceMixin:
    "base mixin that provides WAMP configuration plus transport and component factory"
 
-   async def _setup(self):
-      await super()._setup()
-      await self._protocol.factory._session_joined
+   WAMP_SESSION_TIMEOUT = 3
+
+   async def _connect(self):
+      await super()._connect()
+      try:
+         await asyncio.wait_for(self._transport_factory._session_joined, self.WAMP_SESSION_TIMEOUT, loop=self._loop)
+      except asyncio.TimeoutError as exc:
+         err = "timeout (%is) establishing session" % self.WAMP_SESSION_TIMEOUT
+         self._logger.warn(err)
+         raise WAMPSessionTimeoutError(err)
+      else:
+         self._logger.debug("session established")
 
    @property
    def _transport_factory(self):
-      "create and return the transport factory"
+      "(optionally create and) return the transport factory"
+      try:
+         return self._created_transport_factory
+      except:
+         pass
       try:
          factory = WampWebSocketClientFactory(self._component, url=self.wmp_url, serializers=self.wmp_serializers, loop=self._loop)
       except Exception as exc:
          raise Exception("could not build transport factory: %s" % exc)
       else:
          factory._session_joined = asyncio.Future(loop=self._loop)
-         self._logger.info("WAMP connecting to %s, realm '%s'" % (self.wmp_url, self.wmp_realm))
+         self._logger.info("connecting to %s, realm '%s'" % (self.wmp_url, self.wmp_realm))
+         self._created_transport_factory = factory
          return factory
 
    def _component(self):
