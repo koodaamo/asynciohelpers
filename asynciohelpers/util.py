@@ -1,4 +1,4 @@
-from abc import abstractproperty, abstractmethod
+from abc import abstractproperty
 import os, logging, signal, types
 from autobahn.websocket.util import parse_url
 
