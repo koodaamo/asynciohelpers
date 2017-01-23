@@ -48,8 +48,11 @@ class AsyncioRunning:
       txaio.use_asyncio()
       txaio.config.loop = self._loop
 
-      # set up signal handler
-      self._loop.add_signal_handler(signal.SIGTERM, self.stop)
+      # set up signal handler if possible
+      try:
+         self._loop.add_signal_handler(signal.SIGTERM, self.stop)
+      except:
+         pass # ignore if we're on Windows
 
       # setup background waiter task - note that if the waiter completes early,
       # it will cancel this present task (_start)
